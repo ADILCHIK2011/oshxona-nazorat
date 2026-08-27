@@ -1,0 +1,23 @@
+# Maxfiy ma'lumotlar
+.env
+.env.*
+!.env.example
+
+# Bog'liqliklar
+node_modules/
+
+# Loglar
+*.log
+npm-debug.log*
+
+# Zaxira nusxalar
+/backups
+
+# Mahalliy saqlangan rasm/fayl yuklamalari (agar bo'lsa)
+/uploads
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

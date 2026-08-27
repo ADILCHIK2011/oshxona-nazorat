@@ -1,0 +1,93 @@
+const { Scenes, Markup } = require('telegraf');
+const { User, AuditLog } = require('../../models');
+const { adminMenuKeyboard } = require('../keyboards');
+const { findBestUserMatch } = require('../../lib/fuzzyMatch');
+
+const unblockUserWizard = new Scenes.WizardScene(
+  'unblockUser',
+
+  async (ctx) => {
+    await ctx.reply(
+      'Blokdan chiqariladigan foydalanuvchining ism va familiyasini kiriting:',
+      Markup.removeKeyboard()
+    );
+    return ctx.wizard.next();
+  },
+
+  async (ctx) => {
+    const query = (ctx.message?.text || '').trim();
+    if (!query) {
+      return ctx.reply('Iltimos, ism va familiyani matn sifatida kiriting:');
+    }
+
+    const candidates = await User.find({}).select('firstName lastName telegramId status isBlocked').lean();
+    const match = findBestUserMatch(query, candidates);
+
+    if (!match) {
+      return ctx.reply('Mos foydalanuvchi topilmadi. Qayta urinib ko\'ring (ism va familiyani tekshiring):');
+    }
+
+    ctx.wizard.state.candidateUserId = String(match.user._id);
+
+    const statusNote = !match.user.isBlocked ? ' (allaqachon bloklanmagan)' : '';
+    await ctx.reply(
+      `Eng yaqin topilgan: ${match.user.firstName} ${match.user.lastName}${statusNote}\n\n` +
+        'Shu odamni blokdan chiqaramizmi?',
+      Markup.inlineKeyboard([
+        [Markup.button.callback('✅ Ha, chiqarish', 'yes'), Markup.button.callback('❌ Yo\'q', 'no')],
+      ])
+    );
+    return ctx.wizard.next();
+  },
+
+  async (ctx) => {
+    const data = ctx.callbackQuery?.data;
+    if (!data) {
+      return ctx.reply('Iltimos, tugmalardan birini bosing.');
+    }
+    try {
+      await ctx.answerCbQuery();
+    } catch (_err) {
+      // jim tur
+    }
+    try {
+      await ctx.editMessageReplyMarkup({ inline_keyboard: [] });
+    } catch (_err) {
+      // jim tur
+    }
+
+    if (data !== 'yes') {
+      await ctx.reply('Bekor qilindi.', adminMenuKeyboard);
+      return ctx.scene.leave();
+    }
+
+    const user = await User.findByIdAndUpdate(
+      ctx.wizard.state.candidateUserId,
+      { isBlocked: false },
+      { new: true }
+    );
+    if (!user) {
+      await ctx.reply('Foydalanuvchi topilmadi (o\'chirilgan bo\'lishi mumkin).', adminMenuKeyboard);
+      return ctx.scene.leave();
+    }
+
+    await AuditLog.create({
+      actorType: 'admin',
+      actorId: String(ctx.from.id),
+      action: 'user_unblocked',
+      targetId: String(user._id),
+    });
+
+    await ctx.reply(`✅ ${user.firstName} ${user.lastName} blokdan chiqarildi.`, adminMenuKeyboard);
+
+    try {
+      await ctx.telegram.sendMessage(user.telegramId, '✅ Hisobingiz blokdan chiqarildi.');
+    } catch (err) {
+      console.error('[BOT] Foydalanuvchiga blokdan chiqarilgani haqida xabar yuborilmadi:', err);
+    }
+
+    return ctx.scene.leave();
+  }
+);
+
+module.exports = unblockUserWizard;
